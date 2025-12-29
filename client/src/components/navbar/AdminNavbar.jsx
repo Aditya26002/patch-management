@@ -72,6 +72,16 @@ function AdminNavbar() {
               Hosts
             </Link>
             <Link
+              to="/admin/groups"
+              className={`px-2 py-1 rounded-md transition-all duration-200 ${
+                location.pathname === "/admin/groups"
+                  ? "bg-orange-500 text-white"
+                  : "text-gray-800 dark:text-gray-300 hover:bg-neutral-300 dark:hover:bg-gray-700"
+              }`}
+            >
+              Groups
+            </Link>
+            <Link
               to="/admin/patches"
               className={`px-2 py-1 rounded-md transition-all duration-200 ${
                 location.pathname === "/admin/patches"
@@ -80,6 +90,16 @@ function AdminNavbar() {
               }`}
             >
               Patches
+            </Link>
+            <Link
+              to="/admin/scheduler"
+              className={`px-2 py-1 rounded-md transition-all duration-200 ${
+                location.pathname === "/admin/scheduler"
+                  ? "bg-orange-500 text-white"
+                  : "text-gray-800 dark:text-gray-300 hover:bg-neutral-300 dark:hover:bg-gray-700"
+              }`}
+            >
+              Scheduler
             </Link>
             <Link
               to="/admin/logs"
@@ -91,26 +111,6 @@ function AdminNavbar() {
             >
               Logs
             </Link>
-            <Link
-              to="/admin/groups"
-              className={`px-2 py-1 rounded-md transition-all duration-200 ${
-                location.pathname === "/admin/groups"
-                  ? "bg-orange-500 text-white"
-                  : "text-gray-800 dark:text-gray-300 hover:bg-neutral-300 dark:hover:bg-gray-700"
-              }`}
-            >
-              Groups
-            </Link>
-            {/* <Link
-              to="/admin/scheduler"
-              className={`px-2 py-1 rounded-md transition-all duration-200 ${
-                location.pathname === "/admin/scheduler"
-                  ? "bg-orange-500 text-white"
-                  : "text-gray-800 dark:text-gray-300 hover:bg-neutral-300 dark:hover:bg-gray-700"
-              }`}
-            >
-              Scheduler
-            </Link> */}
           </div>
         </div>
 
