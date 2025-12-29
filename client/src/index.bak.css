@@ -1,0 +1,285 @@
+@import "tailwindcss";
+
+button {
+  @apply cursor-pointer;
+}
+
+.cursor-pointer-disabled {
+  @apply cursor-not-allowed;
+}
+
+/* ========================================
+   LIGHT MODE (Default)
+   ======================================== */
+:root {
+  /* Background Colors */
+  --bg-primary: 249 250 251;        /* gray-50 */
+  --bg-secondary: 255 255 255;      /* white */
+  --bg-tertiary: 243 244 246;       /* gray-100 */
+  --bg-card: 255 255 255;           /* white */
+  
+  /* Text Colors */
+  --text-primary: 17 24 39;         /* gray-900 */
+  --text-secondary: 75 85 99;       /* gray-600 */
+  --text-tertiary: 156 163 175;     /* gray-500 */
+  --text-light: 209 213 219;        /* gray-300 */
+  
+  /* Border Colors */
+  --border-primary: 229 231 235;    /* gray-200 */
+  --border-secondary: 209 213 219;  /* gray-300 */
+  
+  /* Accent Colors */
+  --accent-blue: 37 99 235;         /* blue-600 */
+  --accent-blue-bg: 219 234 254;    /* blue-100 */
+  --accent-yellow: 202 138 4;       /* yellow-600 */
+  --accent-yellow-bg: 254 249 195;  /* yellow-100 */
+  --accent-red: 220 38 38;          /* red-600 */
+  --accent-red-bg: 254 226 226;     /* red-100 */
+  --accent-green: 22 163 74;        /* green-600 */
+  --accent-green-bg: 220 252 231;   /* green-100 */
+  --accent-purple: 147 51 234;      /* purple-600 */
+  --accent-purple-bg: 243 232 255;  /* purple-100 */
+  --accent-orange: 234 88 12;       /* orange-600 */
+  --accent-orange-bg: 255 237 213;  /* orange-100 */
+  
+  /* Hover States */
+  --hover-bg: 243 244 246;          /* gray-100 */
+  --hover-bg-dark: 229 231 235;     /* gray-200 */
+}
+
+/* ========================================
+   DARK MODE
+   ======================================== */
+:root.dark {
+  /* Background Colors */
+  --bg-primary: 17 24 39;           /* gray-900 */
+  --bg-secondary: 31 41 55;         /* gray-800 */
+  --bg-tertiary: 55 65 81;          /* gray-700 */
+  --bg-card: 31 41 55;              /* gray-800 */
+  
+  /* Text Colors */
+  --text-primary: 255 255 255;      /* white */
+  --text-secondary: 209 213 219;    /* gray-300 */
+  --text-tertiary: 156 163 175;     /* gray-400 */
+  --text-light: 75 85 99;           /* gray-600 */
+  
+  /* Border Colors */
+  --border-primary: 55 65 81;       /* gray-700 */
+  --border-secondary: 75 85 99;     /* gray-600 */
+  
+  /* Accent Colors (Slightly adjusted for dark mode) */
+  --accent-blue: 96 165 250;        /* blue-400 */
+  --accent-blue-bg: 30 58 138;      /* blue-900/20 */
+  --accent-yellow: 250 204 21;      /* yellow-400 */
+  --accent-yellow-bg: 113 63 18;    /* yellow-900/20 */
+  --accent-red: 248 113 113;        /* red-400 */
+  --accent-red-bg: 127 29 29;       /* red-900/20 */
+  --accent-green: 74 222 128;       /* green-400 */
+  --accent-green-bg: 20 83 45;      /* green-900/20 */
+  --accent-purple: 192 132 252;     /* purple-400 */
+  --accent-purple-bg: 88 28 135;    /* purple-900/20 */
+  --accent-orange: 251 146 60;      /* orange-400 */
+  --accent-orange-bg: 124 45 18;    /* orange-900/20 */
+  
+  /* Hover States */
+  --hover-bg: 55 65 81;             /* gray-700 */
+  --hover-bg-dark: 75 85 99;        /* gray-600 */
+}
+
+/* ========================================
+   APPLY CSS VARIABLES ONLY TO 
+   ======================================== */
+
+/* Background Colors */
+ .bg-gray-50 {
+  background-color: rgb(var(--bg-primary));
+}
+
+ .bg-white {
+  background-color: rgb(var(--bg-secondary));
+}
+
+ .bg-gray-100 {
+  background-color: rgb(var(--hover-bg));
+}
+
+ .bg-gray-800 {
+  background-color: rgb(var(--bg-card));
+}
+
+ .bg-gray-900 {
+  background-color: rgb(var(--bg-primary));
+}
+
+/* Text Colors */
+ .text-gray-900 {
+  color: rgb(var(--text-primary));
+}
+
+ .text-gray-700 {
+  color: rgb(var(--text-primary));
+}
+
+ .text-gray-600 {
+  color: rgb(var(--text-secondary));
+}
+
+ .text-gray-500 {
+  color: rgb(var(--text-tertiary));
+}
+
+ .text-gray-400 {
+  color: rgb(var(--text-tertiary));
+}
+
+ .text-gray-300 {
+  color: rgb(var(--text-secondary));
+}
+
+ .text-white {
+  color: rgb(var(--text-primary));
+}
+
+ .text-black {
+  color: rgb(var(--text-primary));
+}
+
+/* Border Colors */
+ .border-gray-200 {
+  border-color: rgb(var(--border-primary));
+}
+
+ .border-gray-700 {
+  border-color: rgb(var(--border-primary));
+}
+
+/* Hover States */
+ .hover\:bg-gray-100:hover {
+  background-color: rgb(var(--hover-bg));
+}
+
+ .hover\:bg-gray-700:hover {
+  background-color: rgb(var(--hover-bg));
+}
+
+ .hover\:bg-gray-800:hover {
+  background-color: rgb(var(--hover-bg-dark));
+}
+
+ .hover\:bg-gray-50:hover {
+  background-color: rgb(var(--hover-bg));
+}
+
+/* Accent Background Colors */
+ .bg-blue-50 {
+  background-color: rgb(var(--accent-blue-bg));
+}
+
+ .bg-blue-100 {
+  background-color: rgb(var(--accent-blue-bg));
+}
+
+ .bg-yellow-50 {
+  background-color: rgb(var(--accent-yellow-bg));
+}
+
+ .bg-yellow-100 {
+  background-color: rgb(var(--accent-yellow-bg));
+}
+
+ .bg-red-50 {
+  background-color: rgb(var(--accent-red-bg));
+}
+
+ .bg-red-100 {
+  background-color: rgb(var(--accent-red-bg));
+}
+
+ .bg-green-50 {
+  background-color: rgb(var(--accent-green-bg));
+}
+
+ .bg-green-100 {
+  background-color: rgb(var(--accent-green-bg));
+}
+
+ .bg-purple-50 {
+  background-color: rgb(var(--accent-purple-bg));
+}
+
+ .bg-purple-100 {
+  background-color: rgb(var(--accent-purple-bg));
+}
+
+ .bg-orange-50 {
+  background-color: rgb(var(--accent-orange-bg));
+}
+
+ .bg-orange-100 {
+  background-color: rgb(var(--accent-orange-bg));
+}
+
+/* Accent Text Colors */
+ .text-blue-600 {
+  color: rgb(var(--accent-blue));
+}
+
+ .text-blue-400 {
+  color: rgb(var(--accent-blue));
+}
+
+ .text-yellow-600 {
+  color: rgb(var(--accent-yellow));
+}
+
+ .text-yellow-400 {
+  color: rgb(var(--accent-yellow));
+}
+
+ .text-red-600 {
+  color: rgb(var(--accent-red));
+}
+
+ .text-red-400 {
+  color: rgb(var(--accent-red));
+}
+
+ .text-green-600 {
+  color: rgb(var(--accent-green));
+}
+
+ .text-green-400 {
+  color: rgb(var(--accent-green));
+}
+
+ .text-purple-600 {
+  color: rgb(var(--accent-purple));
+}
+
+ .text-purple-400 {
+  color: rgb(var(--accent-purple));
+}
+
+ .text-orange-600 {
+  color: rgb(var(--accent-orange));
+}
+
+ .text-orange-400 {
+  color: rgb(var(--accent-orange));
+}
+
+/* Custom background class for login page */
+.login-bg {
+  background-image: url('./assets/background.svg');
+  @apply bg-cover bg-center bg-no-repeat;
+}
+
+/* Smooth transitions for theme changes */
+ * {
+  @apply transition-colors duration-200 ease-in-out;
+}
+
+/* Prevent flash on page load */
+.preload * {
+  @apply !transition-none;
+}

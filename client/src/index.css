@@ -1,0 +1,14 @@
+@import "tailwindcss";
+
+.login-bg {
+  background-image: url('./assets/background.svg');
+  @apply bg-cover bg-center bg-no-repeat;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
