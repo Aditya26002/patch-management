@@ -78,8 +78,53 @@ export async function refreshDefaultGroups() {
       Linux: hosts.filter((h) => h.osName === "Linux"),
     };
 
+    // NEW: Ensure default groups exist before updating
+    // Check and create Windows default group if missing
+    let windowsGroup = await Group.findOne({ id: 1, isDefault: true });
+    if (!windowsGroup) {
+      if (hostsByOS.Windows.length > 0) {
+        windowsGroup = new Group({
+          id: 1,
+          name: "Windows Hosts",
+          os: "Windows",
+          hosts: hostsByOS.Windows.map((h) => h._id),
+          isDefault: true,
+        });
+        await windowsGroup.save();
+        console.log("✅ Created missing Windows default group");
+
+        // Update Windows hosts to include this group
+        await Host.updateMany(
+          { _id: { $in: hostsByOS.Windows.map((h) => h._id) } },
+          { $addToSet: { groups: windowsGroup._id } }
+        );
+      }
+    }
+
+    // Check and create Linux default group if missing
+    let linuxGroup = await Group.findOne({ id: 2, isDefault: true });
+    if (!linuxGroup) {
+      if (hostsByOS.Linux.length > 0) {
+        linuxGroup = new Group({
+          id: 2,
+          name: "Linux Hosts",
+          os: "Linux",
+          hosts: hostsByOS.Linux.map((h) => h._id),
+          isDefault: true,
+        });
+        await linuxGroup.save();
+        console.log("✅ Created missing Linux default group");
+
+        // Update Linux hosts to include this group
+        await Host.updateMany(
+          { _id: { $in: hostsByOS.Linux.map((h) => h._id) } },
+          { $addToSet: { groups: linuxGroup._id } }
+        );
+      }
+    }
+
+    // Now proceed with updating existing groups (existing logic)
     // Update Windows default group
-    const windowsGroup = await Group.findOne({ id: 1, isDefault: true });
     if (windowsGroup) {
       const currentHostIds = hostsByOS.Windows.map((h) => h._id.toString());
       const groupHostIds = windowsGroup.hosts.map((id) => id.toString());
@@ -114,7 +159,6 @@ export async function refreshDefaultGroups() {
     }
 
     // Update Linux default group
-    const linuxGroup = await Group.findOne({ id: 2, isDefault: true });
     if (linuxGroup) {
       const currentHostIds = hostsByOS.Linux.map((h) => h._id.toString());
       const groupHostIds = linuxGroup.hosts.map((id) => id.toString());
