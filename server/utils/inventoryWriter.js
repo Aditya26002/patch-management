@@ -48,7 +48,7 @@ export async function addWindowsHost(ip, username, password) {
       throw new Error(`IP ${ip} already exists in Windows inventory`);
     }
 
-    const entry = `${ip} ansible_user='${username}' ansible_password='${password}' ansible_connection=winrm ansible_winrm_transport=basic ansible_winrm_scheme=http ansible_port=5985 ansible_winrm_server_cert_validation=ignore\n`;
+    const entry = `${ip} ansible_user='${username}' ansible_password='${password}' ansible_connection='winrm' ansible_winrm_transport='ntlm' ansible_winrm_scheme='http' ansible_port='5985' ansible_winrm_server_cert_validation='ignore'\n`;
 
     // Read current content
     let content = "";
