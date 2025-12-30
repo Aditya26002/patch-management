@@ -12,6 +12,7 @@ import schedulerRoutes from "./routes/schedulerRoutes.js";
 import groupRoutes from "./routes/groupRoutes.js";
 import { connectMongo } from "./db/mongo.js";
 import { initializeDefaultGroups } from "./utils/groupManager.js";
+import { initializeScheduler } from "./utils/cronManager.js";
 import { InstallLog } from "./models/InstallLog.js";
 
 dotenv.config();
@@ -56,6 +57,9 @@ async function start() {
   await connectMongo();
   await initializeDefaultGroups();
 
+  // Start the scheduler for scheduled tasks
+  initializeScheduler();
+
   // Routes
   app.use("/api/hosts", hostRoutes);
   app.use("/api/patches", patchRoutes);
@@ -93,7 +97,7 @@ async function start() {
 
   // Start HTTPS server
   https.createServer(sslOptions, app).listen(PORT, "0.0.0.0", () => {
-    console.log(`🔒 Backend server running on https://localhost:${PORT}`);
+    console.log(`?? Backend server running on https://localhost:${PORT}`);
   });
 
   // Backfill installType
