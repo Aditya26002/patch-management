@@ -476,65 +476,139 @@ function HostsPage() {
   };
 
   const handleConfirmedUpdate = async () => {
-    setShowConfirmUpdate(false);
+    if (!currentDevice) {
+      setResultMessage({ type: "error", text: "No host selected" });
+      return;
+    }
     setIsDeploying(true);
-
-    const patchesToDeploy = availablePatches.filter((patch) =>
-      selectedPatches.includes(patch._id)
-    );
-
-    const deploymentData = {
-      selectedPatches: patchesToDeploy.map((patch) => ({
-        packageName: patch.name,
-        currentVersion: patch.currentVersion,
-        newVersion: patch.newVersion,
-        patchId: patch._id,
-      })),
-    };
-
-    console.log("Deployment Data being sent to API:", deploymentData);
+    setResultMessage(null);
 
     try {
-      const response = await fetch(
-        `${API_BASE_URL}/hosts/${currentDevice.id}/deploy-patches`,
+      // resolve hostId robustly
+      const hostId =
+        currentDevice?._id ||
+        currentDevice?.id ||
+        (currentDevice?.ip &&
+          devices.find((d) => d.ip === currentDevice.ip)?._id);
+
+      if (!hostId) {
+        setResultMessage({
+          type: "error",
+          text: "Unable to determine host id",
+        });
+        setIsDeploying(false);
+        return;
+      }
+
+      // Build KB list: accept KB strings directly, prefer kb field on objects,
+      // and if frontend selected DB _id strings try to map to availablePatches to extract KB.
+      const normalizeToKB = (item) => {
+        if (!item) return null;
+
+        // if already a KB string
+        if (typeof item === "string" && /^KB\d+/i.test(item.trim())) {
+          return item.trim().toUpperCase();
+        }
+
+        // if object from UI containing kb/patchId/name
+        if (typeof item === "object" && item !== null) {
+          if (item.kb) {
+            const kb = String(item.kb).toUpperCase();
+            return kb.startsWith("KB") ? kb : `KB${kb}`;
+          }
+          if (item.patchId && /^KB\d+/i.test(item.patchId)) {
+            return item.patchId.toUpperCase();
+          }
+          const nameMatch = (item.name || "").match(/KB(\d+)/i);
+          if (nameMatch) return `KB${nameMatch[1]}`;
+          return null;
+        }
+
+        // string that might be a DB _id or other identifier -> try to lookup in availablePatches
+        if (typeof item === "string") {
+          const s = item.trim();
+          // try find by _id / id / patchId / fileName / name
+          const found =
+            availablePatches.find(
+              (ap) =>
+                ap._id === s ||
+                ap.id === s ||
+                ap.patchId === s ||
+                ap.fileName === s ||
+                ap.name === s
+            ) || null;
+          if (found) {
+            if (found.kb) {
+              const kb = String(found.kb).toUpperCase();
+              return kb.startsWith("KB") ? kb : `KB${kb}`;
+            }
+            if (found.patchId && /^KB\d+/i.test(found.patchId)) {
+              return found.patchId.toUpperCase();
+            }
+            const nm = (found.name || "").match(/KB(\d+)/i);
+            if (nm) return `KB${nm[1]}`;
+          }
+          // fallback: if the string itself contains KB later (e.g., "some-KB12345") try extract
+          const kbMatch = s.match(/KB(\d+)/i);
+          if (kbMatch) return `KB${kbMatch[1]}`;
+        }
+
+        return null;
+      };
+
+      const kbList = Array.from(
+        new Set(
+          (selectedPatches || [])
+            .map((p) => normalizeToKB(p))
+            .filter((x) => typeof x === "string" && /^KB\d+/i.test(x))
+        )
+      );
+
+      if (kbList.length === 0) {
+        setResultMessage({
+          type: "error",
+          text: "No valid KB identifiers found for selected patches.",
+        });
+        setIsDeploying(false);
+        return;
+      }
+
+      console.debug("Deploying KBs:", kbList);
+
+      const payload = { selectedPatches: kbList };
+
+      const resp = await fetch(
+        `${API_BASE_URL}/hosts/${hostId}/deploy-patches`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(deploymentData),
+          body: JSON.stringify(payload),
         }
       );
 
-      const data = await response.json();
-
-      console.log("API Response:", data);
-
-      if (!response.ok || !data.success) {
-        throw new Error(data.error || "Failed to deploy patches");
+      const data = await resp.json();
+      if (!data.success) {
+        setResultMessage({
+          type: "error",
+          text: data.error || "Selective install failed",
+        });
+      } else {
+        setResultMessage({
+          type: "success",
+          text: "Selective install started/completed",
+        });
       }
-
-      setResultMessage({
-        type: "success",
-        message: `✅ Successfully deployed ${
-          patchesToDeploy.length
-        } patch(es) to ${currentDevice.ip}! Installed: ${
-          data.data.installed
-        }, Remaining: ${data.data.remaining}${
-          data.data.reboot ? " (Host rebooted)" : ""
-        }`,
-      });
-
-      setTimeout(() => {
-        closePatchDialog();
-        fetchDevices();
-      }, 3000);
     } catch (error) {
-      console.error("Error during patch deployment:", error);
+      console.error("Update request failed:", error);
       setResultMessage({
         type: "error",
-        message: `Patch deployment failed`,
+        text: error.message || "Request failed",
       });
     } finally {
       setIsDeploying(false);
+      setShowConfirmUpdate(false);
+      closePatchDialog();
+      setTimeout(() => fetchDevices(), 3000);
     }
   };
 
