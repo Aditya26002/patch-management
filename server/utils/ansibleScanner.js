@@ -1,6 +1,7 @@
 import { exec } from "child_process";
 import { promisify } from "util";
-import fs from "fs/promises";
+import fs from "fs";
+import path from "path";
 import os from "os";
 
 const execPromise = promisify(exec);
@@ -122,39 +123,87 @@ function parseLinuxOutput(output) {
  * Generates JSON: /logs/installation_logs/{IP}_windows_patch_report_{timestamp}.json
  */
 export async function patchWindowsHost(hostIP, exeName, exeSrcPath) {
-  const command = `ansible-playbook -i /home/support/ansible_project/inventory/windows_hosts /home/support/ansible_project/playbooks/windows_patch_install.yml --limit ${hostIP} -e "exe_name='${exeName}' exe_src_path='${exeSrcPath}'"`;
+  const installCommand = `ansible-playbook -i /home/support/ansible_project/inventory/windows_hosts /home/support/ansible_project/playbooks/windows_patch_install.yml --limit ${hostIP} -e "exe_name='${exeName}' exe_src_path='${exeSrcPath}'"`;
+  const logsDir = "/home/support/ansible_project/logs/installation_logs";
+
   try {
-    console.log(`[Windows Patch] Starting patch installation for ${hostIP}`);
-    console.log(`[Windows Patch] Command: ${command}`);
-    console.log(
-      `[Windows Patch] This may take 10-30 minutes. Host may reboot during process...`
-    );
+    const installResult = await execPromise(installCommand, SHELL_CONFIG);
 
-    const { stdout, stderr } = await execPromise(command, {
-      ...SHELL_CONFIG,
-      maxBuffer: 1024 * 1024 * 50,
-      timeout: 3600000,
-    });
+    // run verification playbook (authoritative verification)
+    const verifyCommand = `ansible-playbook /home/support/ansible_project/playbooks/windows_patch_verify.yml -i /home/support/ansible_project/inventory/windows_hosts -e "target_hosts=${hostIP}"`;
+    let verifyResult;
+    try {
+      verifyResult = await execPromise(verifyCommand, SHELL_CONFIG);
+    } catch (err) {
+      // capture verify output even on non-zero exit
+      verifyResult = err;
+    }
 
-    console.log(`[Windows Patch] Installation complete for ${hostIP}`);
+    // Ansbile verify playbook writes: {logs_dir}/{inventory_hostname}_verify.json
+    const controllerVerifyPath = path.join(logsDir, `${hostIP}_verify.json`);
+    const ts = new Date().toISOString().replace(/[:]/g, "-");
+    const savedVerifyName = `${hostIP}_windows_patch_report_${ts}.json`;
+    const savedVerifyPath = path.join(logsDir, savedVerifyName);
 
-    const summary = parseWindowsPatchSummary(stdout);
-    console.log(`[Windows Patch] Summary for ${hostIP}:`, summary);
+    try {
+      await fs.promises.mkdir(logsDir, { recursive: true });
+
+      if (await fileExists(controllerVerifyPath)) {
+        // copy controller-generated verify file to timestamped file we use as install log
+        await fs.promises.copyFile(controllerVerifyPath, savedVerifyPath);
+      } else {
+        // fallback: write verifyResult stdout/stderr as JSON
+        const stdout = verifyResult?.stdout || "";
+        const stderr = verifyResult?.stderr || "";
+        let payload;
+        try {
+          payload = JSON.parse(stdout);
+        } catch {
+          payload = {
+            stdout,
+            stderr,
+            note: "verify playbook did not emit JSON",
+          };
+        }
+        await fs.promises.writeFile(
+          savedVerifyPath,
+          JSON.stringify(payload, null, 2),
+          "utf-8"
+        );
+      }
+    } catch (writeErr) {
+      console.error(
+        "[ansibleScanner] Failed to persist verification log:",
+        writeErr
+      );
+    }
+
+    // Run post-install scan to update remaining count
+    let scanResult = { patchCount: null, output: "" };
+    try {
+      scanResult = await scanWindowsHost(hostIP);
+    } catch (scanErr) {
+      console.warn(
+        "[ansibleScanner] Post-install scan failed:",
+        scanErr?.message || scanErr
+      );
+    }
+
+    const summary = parseWindowsPatchSummary(installResult.stdout || "");
 
     return {
       success: true,
-      ...summary,
-      output: stdout,
-      error: stderr || null,
+      installSummary: summary,
+      installStdout: installResult.stdout,
+      installStderr: installResult.stderr,
+      verificationLogPath: savedVerifyPath,
+      verificationStdout: verifyResult?.stdout || "",
+      verificationStderr: verifyResult?.stderr || "",
+      postScan: scanResult,
     };
   } catch (error) {
-    console.error(`[Windows Patch] Error for ${hostIP}:`, error);
-
-    if (error.killed && error.signal === "SIGTERM") {
-      throw new Error(`Windows patch timed out after 1 hour for ${hostIP}`);
-    }
-
-    throw new Error(`Windows patch failed: ${error.message}`);
+    console.error("[ansibleScanner] patchWindowsHost error:", error);
+    throw error;
   }
 }
 
@@ -366,71 +415,101 @@ export async function patchLinuxHostSelective(hostIP, packageNames) {
   }
 }
 
+/**
+ * Selective Windows patch installation (KBs list)
+ * Ensure verification run + post-install scan same as full install
+ */
 export async function patchWindowsHostSelective(hostIP, packageNames) {
-  const packagesToUpgrade = packageNames.join(",");
-
-  const command = `ansible-playbook -i /home/support/ansible_project/inventory/windows_hosts /home/support/ansible_project/playbooks/windows_patch_selective2.yml -e '{"target_hosts":"${hostIP}", "patch_selection":"selective","host_kbs":{"${hostIP}":["${packagesToUpgrade}"]}}'`;
+  const kbList = Array.isArray(packageNames)
+    ? packageNames.join(",")
+    : packageNames;
+  const command = `ansible-playbook -i /home/support/ansible_project/inventory/windows_hosts /home/support/ansible_project/playbooks/windows_selective_install.yml --limit ${hostIP} -e "kb_list='${kbList}'"`;
+  const logsDir = "/home/support/ansible_project/logs/installation_logs";
 
   try {
-    console.log(
-      `[Windows Patch Selective] Starting selective patch for ${hostIP}`
-    );
-    console.log(
-      `[Windows Patch Selective] Packages to upgrade: ${packagesToUpgrade}`
-    );
-    console.log(`[Windows Patch Selective] Command: ${command}`);
+    const installResult = await execPromise(command, SHELL_CONFIG);
 
-    const { stdout, stderr } = await execPromise(command, {
-      ...SHELL_CONFIG,
-      maxBuffer: 1024 * 1024 * 100,
-      timeout: 3600000,
-    });
+    // verification step (same authoritative verify playbook)
+    const verifyCommand = `ansible-playbook /home/support/ansible_project/playbooks/windows_patch_verify.yml -i /home/support/ansible_project/inventory/windows_hosts -e "target_hosts=${hostIP}"`;
+    let verifyResult;
+    try {
+      verifyResult = await execPromise(verifyCommand, SHELL_CONFIG);
+    } catch (err) {
+      verifyResult = err;
+    }
 
-    console.log(
-      `[Windows Patch Selective] Installation complete for ${hostIP}`
-    );
+    // Persist verification JSON similar to full install
+    const controllerVerifyPath = path.join(logsDir, `${hostIP}_verify.json`);
+    const ts = new Date().toISOString().replace(/[:]/g, "-");
+    const savedVerifyName = `${hostIP}_windows_patch_report_${ts}.json`;
+    const savedVerifyPath = path.join(logsDir, savedVerifyName);
 
-    const summary = parseWindowsPatchSummary(stdout);
-    console.log(`[Windows Patch Selective] Summary for ${hostIP}:`, summary);
+    try {
+      await fs.promises.mkdir(logsDir, { recursive: true });
+
+      if (await fileExists(controllerVerifyPath)) {
+        await fs.promises.copyFile(controllerVerifyPath, savedVerifyPath);
+      } else {
+        const stdout = verifyResult?.stdout || "";
+        const stderr = verifyResult?.stderr || "";
+        let payload;
+        try {
+          payload = JSON.parse(stdout);
+        } catch {
+          payload = {
+            stdout,
+            stderr,
+            note: "verify playbook did not emit JSON",
+          };
+        }
+        await fs.promises.writeFile(
+          savedVerifyPath,
+          JSON.stringify(payload, null, 2),
+          "utf-8"
+        );
+      }
+    } catch (writeErr) {
+      console.error(
+        "[ansibleScanner] Failed to persist selective verification log:",
+        writeErr
+      );
+    }
+
+    // Post-install scan
+    let scanResult = { patchCount: null, output: "" };
+    try {
+      scanResult = await scanWindowsHost(hostIP);
+    } catch (scanErr) {
+      console.warn(
+        "[ansibleScanner] Post-install scan failed:",
+        scanErr?.message || scanErr
+      );
+    }
+
+    const summary = parseWindowsPatchSummary(installResult.stdout || "");
 
     return {
       success: true,
-      hostIP,
-      packagesToUpgrade: packageNames,
-      ...summary,
-      output: stdout,
-      error: stderr || null,
+      installSummary: summary,
+      installStdout: installResult.stdout,
+      installStderr: installResult.stderr,
+      verificationLogPath: savedVerifyPath,
+      verificationStdout: verifyResult?.stdout || "",
+      verificationStderr: verifyResult?.stderr || "",
+      postScan: scanResult,
     };
   } catch (error) {
-    console.error(`[Windows Patch Selective] Error for ${hostIP}:`, error);
-    throw new Error(`Windows selective patch failed: ${error.message}`);
+    console.error("[ansibleScanner] patchWindowsHostSelective error:", error);
+    throw error;
   }
 }
 
-async function checkHostInInventory(inventoryPath, hostIP) {
+// helper used above
+async function fileExists(p) {
   try {
-    const fullPath = `/home/support/ansible_project/${inventoryPath}`;
-    const content = await fs.readFile(fullPath, "utf-8");
-    const lines = content.split("\n");
-
-    for (const line of lines) {
-      const trimmedLine = line.trim();
-      // Skip comments, empty lines, and section headers
-      if (
-        trimmedLine.startsWith("#") ||
-        trimmedLine.startsWith("[") ||
-        !trimmedLine
-      ) {
-        continue;
-      }
-      // Check if line starts with the IP
-      if (trimmedLine.startsWith(hostIP + " ") || trimmedLine === hostIP) {
-        return true;
-      }
-    }
-    return false;
-  } catch (error) {
-    console.error(`[Inventory Check] Error reading ${inventoryPath}:`, error);
+    await fs.promises.access(p);
+    return true;
+  } catch {
     return false;
   }
 }
@@ -662,4 +741,32 @@ function parseDeploymentResults(output, hostIPs) {
   }
 
   return results;
+}
+
+async function checkHostInInventory(inventoryPath, hostIP) {
+  try {
+    const fullPath = `/home/support/ansible_project/${inventoryPath}`;
+    const content = await fs.readFile(fullPath, "utf-8");
+    const lines = content.split("\n");
+
+    for (const line of lines) {
+      const trimmedLine = line.trim();
+      // Skip comments, empty lines, and section headers
+      if (
+        trimmedLine.startsWith("#") ||
+        trimmedLine.startsWith("[") ||
+        !trimmedLine
+      ) {
+        continue;
+      }
+      // Check if line starts with the IP
+      if (trimmedLine.startsWith(hostIP + " ") || trimmedLine === hostIP) {
+        return true;
+      }
+    }
+    return false;
+  } catch (error) {
+    console.error(`[Inventory Check] Error reading ${inventoryPath}:`, error);
+    return false;
+  }
 }

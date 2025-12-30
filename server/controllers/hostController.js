@@ -229,128 +229,86 @@ export async function listHosts(req, res) {
 export async function patchHost(req, res) {
   try {
     const { id } = req.params;
+    const { selectedPatches = [] } = req.body; // Expect array of patch objects or identifiers
 
-    console.log(`[Patch Host] Request received for host ID: ${id}`);
+    // Validate input
+    if (!selectedPatches || !Array.isArray(selectedPatches)) {
+      return res
+        .status(400)
+        .json({ success: false, error: "selectedPatches must be an array" });
+    }
 
     const host = await Host.findById(id);
     if (!host) {
       return res.status(404).json({ success: false, error: "Host not found" });
     }
 
-    console.log(`[Patch Host] Found host: ${host.ip} (${host.osName})`);
-
-    // Step 1: Run patch installation + verification scan
+    const os = host.osName;
+    const hostIP = host.ip;
     let result;
-    try {
-      result = await patchAndScanHost(host.ip, host.osName);
-      console.log(
-        `[Patch Host] Patch & scan completed for ${host.ip}:`,
-        result
-      );
-    } catch (patchError) {
-      console.error(
-        `[Patch Host] Patch & scan failed for ${host.ip}:`,
-        patchError
-      );
-      return res.status(500).json({
-        success: false,
-        error: `Patch installation failed: ${patchError.message}`,
-      });
-    }
 
-    // Step 2: Update host in database
-    host.patchCount = result.remaining;
-    host.updatedAt = new Date();
-    await host.save();
-
-    console.log(
-      `[Patch Host] Database updated for ${host.ip}, new patchCount: ${host.patchCount}`
-    );
-
-    // Step 3: Process and save installation log
-    try {
-      const installLog = await processInstallLog(
-        host.ip,
-        host.osName.toLowerCase(),
-        host._id
-      );
-
-      if (installLog) {
-        console.log(`[Patch Host] ? Install log saved for ${host.ip}`);
-      } else {
-        console.warn(`[Patch Host] ?? Install log not saved for ${host.ip}`);
+    // Normalize patch identifiers for selective installers
+    if (os === "Windows") {
+      // Accept objects with kb property or plain strings
+      const kbList = selectedPatches
+        .map((p) =>
+          typeof p === "string" ? p : p.kb || p.packageName || p.patchId
+        )
+        .filter(Boolean);
+      if (kbList.length === 0) {
+        return res.status(400).json({
+          success: false,
+          error: "No valid KBs provided for Windows selective install",
+        });
       }
-    } catch (logError) {
-      console.error(
-        `[Patch Host] ? Failed to save install log for ${host.ip}:`,
-        logError
-      );
-    }
-
-    // Step 4: Process and save post-patch verification scan log
-    if (result.scanSuccess) {
+      result = await patchWindowsHostSelective(hostIP, kbList);
+      // Persist selective install log
       try {
-        const scanLog = await processScanLog(
-          host.ip,
-          host.osName.toLowerCase(),
-          host._id,
-          "post_patch_scan"
+        await processSelectiveInstallLog(hostIP, "windows", host._id);
+      } catch (e) {
+        console.warn(
+          "Failed to process selective install log:",
+          e?.message || e
         );
-
-        if (scanLog) {
-          console.log(
-            `[Patch Host] ? Post-patch scan log saved for ${host.ip}`
-          );
-        } else {
-          console.warn(
-            `[Patch Host] ?? Post-patch scan log not saved for ${host.ip}`
-          );
-        }
-      } catch (logError) {
-        console.error(
-          `[Patch Host] ? Failed to save post-patch scan log for ${host.ip}:`,
-          logError
+      }
+    } else {
+      // Linux
+      const pkgList = selectedPatches
+        .map((p) => (typeof p === "string" ? p : p.packageName || p.patchId))
+        .filter(Boolean);
+      if (pkgList.length === 0) {
+        return res.status(400).json({
+          success: false,
+          error: "No valid packages provided for Linux selective install",
+        });
+      }
+      result = await patchLinuxHostSelective(hostIP, pkgList);
+      try {
+        await processSelectiveInstallLog(hostIP, "linux", host._id);
+      } catch (e) {
+        console.warn(
+          "Failed to process selective install log:",
+          e?.message || e
         );
       }
     }
 
-    // Build success message
-    let message = `? Patched ${host.ip} successfully! Installed: ${result.installed} patches`;
-
-    if (result.scanSuccess) {
-      message += `, Verified: ${result.scanRemaining} patches remaining`;
-    } else {
-      message += `, Patch summary: ${result.patchSummaryRemaining} remaining (verification scan failed, using fallback)`;
+    // Update host patchCount from postScan (if available)
+    if (result?.postScan?.patchCount != null) {
+      host.patchCount = result.postScan.patchCount;
+      await host.save();
     }
 
-    if (result.reboot) {
-      message += `. ?? Host rebooted during patching.`;
-    } else {
-      message += `. ? No reboot required.`;
-    }
-
-    return res.json({
+    res.json({
       success: true,
-      message,
-      data: {
-        id: host._id,
-        ip: host.ip,
-        osName: host.osName,
-        installed: result.installed,
-        remaining: result.remaining,
-        patchSummaryRemaining: result.patchSummaryRemaining,
-        scanRemaining: result.scanRemaining,
-        scanSuccess: result.scanSuccess,
-        reboot: result.reboot,
-        patchCount: host.patchCount,
-      },
+      message: "Selective install started/completed",
+      data: result,
     });
   } catch (err) {
-    console.error("[Patch Host] Unexpected error:", err);
-    return res.status(500).json({
-      success: false,
-      error: err.message || "Failed to patch host",
-    });
+    console.error("Error in patchHost:", err);
+    res
+      .status(500)
+      .json({ success: false, error: err.message || "Failed to patch host" });
   }
 }
 
@@ -472,21 +430,18 @@ export async function bulkPatchHosts(req, res) {
 export async function deploySelectivePatches(req, res) {
   try {
     const { id } = req.params;
-    const { selectedPatches } = req.body;
-
-    console.log(
-      "[Deploy Patches] Raw selectedPatches received:",
-      JSON.stringify(selectedPatches, null, 2)
-    );
-
-    if (
-      !selectedPatches ||
-      !Array.isArray(selectedPatches) ||
-      selectedPatches.length === 0
-    ) {
+    if (!id) {
       return res
         .status(400)
-        .json({ success: false, error: "No patches selected" });
+        .json({ success: false, error: "Host id missing in URL" });
+    }
+
+    // ensure selectedPatches provided
+    const { selectedPatches = [] } = req.body;
+    if (!Array.isArray(selectedPatches)) {
+      return res
+        .status(400)
+        .json({ success: false, error: "selectedPatches must be an array" });
     }
 
     const host = await Host.findById(id);
@@ -500,43 +455,94 @@ export async function deploySelectivePatches(req, res) {
     let kbNumbers;
 
     if (host.osName === "Windows") {
-      kbNumbers = selectedPatches
-        .map((p) => {
-          console.log(
-            "[Deploy Patches] Processing patch:",
-            JSON.stringify(p, null, 2)
-          );
+      // selectedPatches may contain:
+      // - patch DB _id strings
+      // - patch objects ({ kb, name, packageName, patchId, fileName, ... })
+      // - raw KB strings like "KB123456"
+      const items = Array.isArray(selectedPatches) ? selectedPatches : [];
 
-          // ? Check `kb` field first
-          if (p.kb) {
-            const normalized = p.kb.startsWith("KB") ? p.kb : `KB${p.kb}`;
-            console.log(
-              `[Deploy Patches] Found kb field: ${p.kb} -> ${normalized}`
-            );
-            return normalized;
+      // fetch any Patch docs if input contains 24-char hex ids
+      const idStrings = items.filter((x) => typeof x === "string");
+      const patchDocsById = {};
+      const patchDocsByKey = {}; // patchId / fileName / name -> doc
+      if (idStrings.length > 0) {
+        const patchDocs = await Patch.find({
+          $or: [
+            {
+              _id: {
+                $in: idStrings.filter((s) => /^[a-fA-F0-9]{24}$/.test(s)),
+              },
+            },
+            { patchId: { $in: idStrings } },
+            { fileName: { $in: idStrings } },
+            { name: { $in: idStrings } },
+          ],
+        });
+        patchDocs.forEach((pd) => {
+          patchDocsById[pd._id.toString()] = pd;
+          if (pd.patchId) patchDocsByKey[String(pd.patchId)] = pd;
+          if (pd.fileName) patchDocsByKey[String(pd.fileName)] = pd;
+          if (pd.name) patchDocsByKey[String(pd.name)] = pd;
+        });
+      }
+
+      const kbSet = new Set();
+      for (const p of items) {
+        let src = null;
+        if (typeof p === "string") {
+          // try DB _id, then fallback to patchId/fileName/name
+          if (patchDocsById[p]) {
+            src = patchDocsById[p];
+          } else if (patchDocsByKey[p]) {
+            src = patchDocsByKey[p];
+          } else {
+            // maybe already a KB string or contains KB
+            const s = p.trim();
+            const kbMatch = s.match(/^KB(\d+)$/i) || s.match(/KB(\d+)/i);
+            if (kbMatch) {
+              kbSet.add(`KB${kbMatch[1]}`);
+            } else {
+              console.warn("[Deploy Patches] No KB found in string:", p);
+            }
+            continue;
           }
+        } else if (typeof p === "object" && p !== null) {
+          src = p;
+        } else {
+          continue;
+        }
 
-          // ? Try to extract from `name` OR `packageName` field
-          const textToSearch = p.name || p.packageName || "";
-          const match = textToSearch.match(/KB(\d+)/i);
+        // prefer explicit field `kb`
+        if (src.kb) {
+          const normalized = String(src.kb).toUpperCase().startsWith("KB")
+            ? String(src.kb).toUpperCase()
+            : `KB${String(src.kb)}`;
+          kbSet.add(normalized);
+          continue;
+        }
 
-          if (match) {
-            console.log(
-              `[Deploy Patches] Extracted from ${
-                p.name ? "name" : "packageName"
-              }: ${textToSearch} -> KB${match[1]}`
-            );
-            return `KB${match[1]}`;
-          }
+        // check common model fields: patchId, name, fileName, packageName
+        if (src.patchId && /^KB\d+/i.test(src.patchId)) {
+          kbSet.add(src.patchId.toUpperCase());
+          continue;
+        }
 
-          console.warn(`[Deploy Patches] No KB found in:`, p);
-          return null;
-        })
-        .filter(Boolean);
+        const text = (
+          src.name ||
+          src.packageName ||
+          src.fileName ||
+          ""
+        ).toString();
+        const m = text.match(/KB(\d+)/i);
+        if (m) {
+          kbSet.add(`KB${m[1]}`);
+        } else {
+          console.warn("[Deploy Patches] No KB found in object:", src);
+        }
+      }
 
-      console.log(
-        `[Deploy Patches] Final KB numbers array: ${JSON.stringify(kbNumbers)}`
-      );
+      kbNumbers = Array.from(kbSet);
+      console.log("[Deploy Patches] Final KB numbers array:", kbNumbers);
 
       if (kbNumbers.length === 0) {
         return res.status(400).json({
@@ -627,8 +633,10 @@ export async function deploySelectivePatches(req, res) {
       },
     });
   } catch (error) {
-    console.error(`[Deploy Patches] Unexpected error:`, error);
-    return res.status(500).json({ success: false, error: error.message });
+    console.error("[Deploy Selective] Unexpected error:", error);
+    res
+      .status(500)
+      .json({ success: false, error: error.message || "Deploy failed" });
   }
 }
 

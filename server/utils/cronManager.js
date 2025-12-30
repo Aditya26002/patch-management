@@ -8,10 +8,7 @@ import {
   patchLinuxHostSelective,
   patchWindowsHostSelective,
 } from "./ansibleScanner.js";
-import {
-  processSelectiveInstallLog,
-  processSelectiveApplicationInstallLog,
-} from "./logReader.js";
+import { processSelectiveInstallLog } from "./logReader.js";
 
 /**
  * Execute a scheduled patch deployment task
@@ -36,38 +33,126 @@ async function executePatchTask(task) {
       message: `Started executing scheduled patch deployment`,
     });
 
-    // Get patches and hosts
+    // Get patches
     const patches = await Patch.find({ _id: { $in: task.patchIds } });
-    const hosts = await Host.find({
-      osName: task.osType,
-      availablePatches: { $in: patches.map((p) => p.patchId) },
-    });
+    // Debug: Log patch and host selection criteria
+    console.log("[Scheduler][DEBUG] Patch IDs in task:", task.patchIds);
+    console.log(
+      "[Scheduler][DEBUG] Patch DB objects:",
+      patches.map((p) => ({
+        _id: p._id,
+        patchId: p.patchId,
+        fileName: p.fileName,
+      }))
+    );
+    console.log("[Scheduler][DEBUG] Task hostIds:", task.hostIds);
+    console.log("[Scheduler][DEBUG] Task osType:", task.osType);
+    let hosts = [];
+    if (task.hostIds && task.hostIds.length > 0) {
+      hosts = await Host.find({
+        _id: { $in: task.hostIds },
+      });
+      console.log("[Scheduler][DEBUG] Host query (with hostIds):", {
+        _id: { $in: task.hostIds },
+      });
+    } else {
+      hosts = await Host.find({
+        osName: task.osType,
+      });
+      console.log("[Scheduler][DEBUG] Host query (all eligible):", {
+        osName: task.osType,
+      });
+    }
+
+    console.log(
+      "[Scheduler][DEBUG] Hosts found:",
+      hosts.map((h) => ({
+        _id: h._id,
+        ip: h.ip,
+        osName: h.osName,
+        availablePatches: h.availablePatches,
+      }))
+    );
 
     if (hosts.length === 0) {
       throw new Error("No compatible hosts found for patch deployment");
     }
 
-    // Deploy patches using the deployPatchToHosts function
     const hostIPs = hosts.map((h) => h.ip);
     const patchIds = patches.map((p) => p.patchId);
 
+    // Log deployment details in the same style as manual deployment
+    const patch = patches[0]; // Only one patch per schedule for Windows
+    const patchName =
+      patch?.name || patch?.patchName || patch?.fileName || patchIds[0];
+    // Always use the patch file name for exe_name and exe_src_path (like manual deployment)
+    let patchFile = patch?.fileName;
+    if (!patchFile) {
+      // fallback: try to extract from filePath if present
+      if (patch?.filePath) {
+        const parts = patch.filePath.split("/");
+        patchFile = parts[parts.length - 1];
+      } else {
+        patchFile = patchIds[0]; // fallback, but this should not happen if patch is valid
+      }
+    }
+    // Use patch.fileName for exe_name and exe_src_path, matching manual deployment
+    const patchExeName = patch?.fileName || patchFile;
+    const patchFilePath = `uploadedPatches/${patchExeName}`;
+    const osType = task.osType.toLowerCase();
+    const workingDir = "/home/support/ansible_project";
+    let ansibleCmd = "";
+    if (osType === "windows") {
+      ansibleCmd = `ansible-playbook -i inventory/windows_hosts playbooks/windows_selective_software3.yml --limit ${hostIPs.join(
+        ","
+      )} -e "exe_name='${patchExeName}' exe_src_path='${patchFilePath}'"`;
+    } else if (osType === "linux") {
+      ansibleCmd =
+        `ansible-playbook -i inventory/linux_hosts playbooks/linux_patch_install.yml --limit ${hostIPs.join(
+          ","
+        )}` + ` -e "patch_ids='${patchName.join(",")}'"`;
+    }
+    console.log("=== SCHEDULED DEPLOYMENT REQUEST ===");
+    console.log("Patch ID:", patchIds[0]);
+    console.log("Patch Name:", patchName);
+    console.log("Patch File:", patchFile);
+    console.log("Target Hosts:", hostIPs);
+    console.log("OS Type:", osType);
+    console.log("========================");
     console.log(
-      `[Scheduler] Deploying patches ${patchIds.join(", ")} to hosts ${hostIPs.join(", ")}`
+      "[Deploy Patch] Validating hosts in",
+      osType.charAt(0).toUpperCase() + osType.slice(1),
+      "inventory..."
     );
-
-    // Call the deployment function
-    const result = await deployPatchToHosts(
-      hostIPs,
-      patchIds,
-      task.osType.toLowerCase()
+    console.log(
+      `[Deploy Patch] ? All hosts validated in ${
+        osType.charAt(0).toUpperCase() + osType.slice(1)
+      } inventory`
     );
-
+    console.log(
+      `[Deploy Patch] Starting deployment to ${hostIPs.length} host(s)`
+    );
+    console.log(`[Deploy Patch] Target hosts: ${hostIPs.join(", ")}`);
+    console.log(`[Deploy Patch] Patch file: ${patchFile}`);
+    console.log(`[Deploy Patch] OS type: ${osType}`);
+    console.log(`[Deploy Patch] Working directory: ${workingDir}`);
+    console.log(`[Deploy Patch] Command: ${ansibleCmd}`);
+    // Pass patch.fileName to deployPatchToHosts, not patchId
+    const result = await deployPatchToHosts(hostIPs, patchExeName, osType);
+    console.log(`[Scheduler] [DEBUG] deployPatchToHosts result:`, result);
     // Process logs
-    for (const hostIP of hostIPs) {
+    for (const host of hosts) {
       try {
-        await processSelectiveApplicationInstallLog(hostIP, task.osType.toLowerCase());
+        await processSelectiveInstallLog(
+          host.ip,
+          task.osType.toLowerCase(),
+          host._id
+        );
       } catch (logError) {
-        console.error(`[Scheduler] Error processing log for ${hostIP}:`, logError);
+        console.error(
+          `[Scheduler] Error processing log for ${host.ip}:`,
+          logError
+        );
       }
     }
 
@@ -79,6 +164,7 @@ async function executePatchTask(task) {
       targetHosts: hostIPs,
       success: result.success || true,
     };
+
     await task.save();
 
     // Log completion
@@ -171,10 +257,7 @@ async function executeUpdateTask(task) {
           message: "Updates applied successfully",
         });
       } catch (error) {
-        console.error(
-          `[Scheduler] Error updating host ${host.ip}:`,
-          error
-        );
+        console.error(`[Scheduler] Error updating host ${host.ip}:`, error);
         results.push({
           hostIP: host.ip,
           success: false,
@@ -208,12 +291,17 @@ async function executeUpdateTask(task) {
       osType: task.osType,
       performedBy: task.createdBy,
       message: `Updated ${successCount}/${hosts.length} hosts successfully`,
-      error: isSuccess ? undefined : `${hosts.length - successCount} hosts failed`,
+      error: isSuccess
+        ? undefined
+        : `${hosts.length - successCount} hosts failed`,
     });
 
     console.log(`[Scheduler] Update task ${task._id} completed`);
   } catch (error) {
-    console.error(`[Scheduler] Error executing update task ${task._id}:`, error);
+    console.error(
+      `[Scheduler] Error executing update task ${task._id}:`,
+      error
+    );
 
     // Update task status to failed
     task.status = "failed";
@@ -266,13 +354,15 @@ async function checkAndExecuteTasks() {
       }
     }
   } catch (error) {
-    console.error("[Scheduler] Error checking scheduled tasks:", error);
+    console.error("[Scheduler] Error checking and executing tasks:", error);
   }
 }
 
 /**
  * Initialize the scheduler
- * Checks for pending tasks every minute
+            if (!patchFilePath) {
+              patchFilePath = `/uploadedPatches/${patchFile}`;
+            }
  */
 export function initializeScheduler() {
   console.log("[Scheduler] Initializing task scheduler...");
