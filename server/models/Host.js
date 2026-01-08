@@ -44,12 +44,6 @@ const hostSchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
-    groups: [
-      {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "Group",
-      },
-    ],
   },
   {
     timestamps: true,

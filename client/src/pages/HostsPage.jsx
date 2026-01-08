@@ -213,7 +213,7 @@ function HostsPage() {
 
       setResultMessage({
         type: "success",
-        message: `✅ Scan completed for ${device.ip}. Found ${data.data.patchCount} available patches.`,
+        message: `Scan completed for ${device.ip}. Found ${data.data.patchCount} available patches.`,
       });
 
       if (showPatchDialog && currentDevice && currentDevice.id === device.id) {
@@ -412,12 +412,6 @@ function HostsPage() {
             kbValue = `KB${kbValue}`;
           }
 
-          console.log("[HostsPage] Transformed update:", {
-            original: update.kb,
-            transformed: kbValue,
-            name: update.name,
-          });
-
           return {
             ...update,
             kb: kbValue,
@@ -472,10 +466,15 @@ function HostsPage() {
       });
       return;
     }
+    console.log(
+      "[HostsPage] Update click with selected patches:",
+      selectedPatches
+    );
     setShowConfirmUpdate(true);
   };
 
   const handleConfirmedUpdate = async () => {
+    console.log("[HostsPage] Confirmed update for patches:", selectedPatches);
     if (!currentDevice) {
       setResultMessage({ type: "error", text: "No host selected" });
       return;
@@ -484,7 +483,7 @@ function HostsPage() {
     setResultMessage(null);
 
     try {
-      // resolve hostId robustly
+      // Resolve hostId robustly
       const hostId =
         currentDevice?._id ||
         currentDevice?.id ||
@@ -500,82 +499,79 @@ function HostsPage() {
         return;
       }
 
-      // Build KB list: accept KB strings directly, prefer kb field on objects,
-      // and if frontend selected DB _id strings try to map to availablePatches to extract KB.
-      const normalizeToKB = (item) => {
-        if (!item) return null;
+      let payload;
 
-        // if already a KB string
-        if (typeof item === "string" && /^KB\d+/i.test(item.trim())) {
-          return item.trim().toUpperCase();
-        }
+      // Handle Windows hosts
+      if (currentDevice.osName === "Windows") {
+        // selectedPatches contains IDs, map them to KB numbers from availablePatches
+        const kbList = selectedPatches
+          .map((patchId) => {
+            const patch = availablePatches.find((p) => p._id === patchId);
+            if (!patch) return null;
 
-        // if object from UI containing kb/patchId/name
-        if (typeof item === "object" && item !== null) {
-          if (item.kb) {
-            const kb = String(item.kb).toUpperCase();
-            return kb.startsWith("KB") ? kb : `KB${kb}`;
-          }
-          if (item.patchId && /^KB\d+/i.test(item.patchId)) {
-            return item.patchId.toUpperCase();
-          }
-          const nameMatch = (item.name || "").match(/KB(\d+)/i);
-          if (nameMatch) return `KB${nameMatch[1]}`;
-          return null;
-        }
-
-        // string that might be a DB _id or other identifier -> try to lookup in availablePatches
-        if (typeof item === "string") {
-          const s = item.trim();
-          // try find by _id / id / patchId / fileName / name
-          const found =
-            availablePatches.find(
-              (ap) =>
-                ap._id === s ||
-                ap.id === s ||
-                ap.patchId === s ||
-                ap.fileName === s ||
-                ap.name === s
-            ) || null;
-          if (found) {
-            if (found.kb) {
-              const kb = String(found.kb).toUpperCase();
-              return kb.startsWith("KB") ? kb : `KB${kb}`;
+            // Extract KB number
+            let kb = patch.kb;
+            if (Array.isArray(kb) && kb.length > 0) {
+              kb = kb[0];
             }
-            if (found.patchId && /^KB\d+/i.test(found.patchId)) {
-              return found.patchId.toUpperCase();
+
+            // Ensure it starts with "KB"
+            if (kb && !kb.startsWith("KB")) {
+              kb = `KB${kb}`;
             }
-            const nm = (found.name || "").match(/KB(\d+)/i);
-            if (nm) return `KB${nm[1]}`;
-          }
-          // fallback: if the string itself contains KB later (e.g., "some-KB12345") try extract
-          const kbMatch = s.match(/KB(\d+)/i);
-          if (kbMatch) return `KB${kbMatch[1]}`;
+
+            return kb;
+          })
+          .filter((kb) => kb && kb.startsWith("KB"));
+
+        console.log("[HostsPage] Windows KB list:", kbList);
+
+        if (kbList.length === 0) {
+          setResultMessage({
+            type: "error",
+            text: "No valid KB numbers found in selection",
+          });
+          setIsDeploying(false);
+          return;
         }
 
-        return null;
-      };
+        payload = { selectedPatches: kbList };
+      }
+      // Handle Linux hosts
+      else if (currentDevice.osName === "Linux") {
+        // selectedPatches contains IDs, map them to package names from availablePatches
+        const packageList = selectedPatches
+          .map((patchId) => {
+            const patch = availablePatches.find((p) => p._id === patchId);
+            if (!patch) return null;
 
-      const kbList = Array.from(
-        new Set(
-          (selectedPatches || [])
-            .map((p) => normalizeToKB(p))
-            .filter((x) => typeof x === "string" && /^KB\d+/i.test(x))
-        )
-      );
+            // Try different package name fields
+            return patch.packageName || patch.name || patch.package || null;
+          })
+          .filter(Boolean);
 
-      if (kbList.length === 0) {
+        console.log("[HostsPage] Linux package list:", packageList);
+
+        if (packageList.length === 0) {
+          setResultMessage({
+            type: "error",
+            text: "No valid package names found in selection",
+          });
+          setIsDeploying(false);
+          return;
+        }
+
+        payload = { selectedPatches: packageList };
+      } else {
         setResultMessage({
           type: "error",
-          text: "No valid KB identifiers found for selected patches.",
+          text: `Unsupported OS: ${currentDevice.osName}`,
         });
         setIsDeploying(false);
         return;
       }
 
-      console.debug("Deploying KBs:", kbList);
-
-      const payload = { selectedPatches: kbList };
+      console.log("[HostsPage] Sending payload:", payload);
 
       const resp = await fetch(
         `${API_BASE_URL}/hosts/${hostId}/deploy-patches`,
@@ -602,7 +598,7 @@ function HostsPage() {
       console.error("Update request failed:", error);
       setResultMessage({
         type: "error",
-        text: error.message || "Request failed",
+        text: "Selective install request failed",
       });
     } finally {
       setIsDeploying(false);
@@ -650,7 +646,7 @@ function HostsPage() {
       const { success, failed, rebooted, details } = data;
       const verifiedCount = details?.filter((d) => d.scanSuccess).length || 0;
 
-      let message = `✅ Bulk patch complete! Success: ${success}, Failed: ${failed}`;
+      let message = `Bulk patch complete! Success: ${success}, Failed: ${failed}`;
 
       if (rebooted > 0) {
         message += `, 🔄 ${rebooted} host(s) rebooted`;

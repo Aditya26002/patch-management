@@ -1,6 +1,13 @@
 import Group from "../models/Group.js";
 import GroupLog from "../models/GroupLog.js";
 import { Host } from "../models/Host.js";
+import {
+  patchLinuxHostSelective,
+  patchWindowsHostSelective,
+  scanLinuxHost,
+  scanWindowsHost,
+} from "../utils/ansibleScanner.js";
+import { processSelectiveInstallLog } from "../utils/logReader.js";
 
 // Get next available group ID
 async function getNextGroupId() {
@@ -364,6 +371,207 @@ export async function deleteGroup(req, res) {
       success: false,
       message: "Failed to delete group",
       error: error.message,
+    });
+  }
+}
+
+export async function deploySelectivePatchesToGroup(req, res) {
+  try {
+    const { id } = req.params;
+    const { selectedPatches } = req.body;
+
+    if (!selectedPatches || typeof selectedPatches !== "object") {
+      return res.status(400).json({
+        success: false,
+        error:
+          "selectedPatches must be an object mapping hostIP to patch array",
+      });
+    }
+
+    const group = await Group.findById(id).populate("hosts");
+    if (!group) {
+      return res.status(404).json({ success: false, error: "Group not found" });
+    }
+
+    if (group.hosts.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: "No hosts in this group",
+      });
+    }
+
+    // FIX: Use correct property name - check which one your Group model uses
+    const osType = group.osType || group.os;
+
+    if (!osType) {
+      console.error(
+        "[Group Selective Patch] Group OS type is undefined:",
+        group
+      );
+      return res.status(400).json({
+        success: false,
+        error: "Group OS type is not defined",
+      });
+    }
+
+    console.log(
+      `[Group Selective Patch] Starting for group: ${group.name} (${osType})`
+    );
+
+    const results = {
+      total: group.hosts.length,
+      success: 0,
+      failed: 0,
+      details: [],
+    };
+
+    const hostsToUpdate = group.hosts.filter(
+      (host) => selectedPatches[host.ip] && selectedPatches[host.ip].length > 0
+    );
+
+    if (hostsToUpdate.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: "No patches selected for any host",
+      });
+    }
+
+    // FIX: Use the osType variable consistently
+    if (osType === "Windows") {
+      // Windows processing...
+      for (const host of hostsToUpdate) {
+        const kbList = selectedPatches[host.ip];
+
+        try {
+          console.log(
+            `[Group Selective Patch] Processing ${host.ip} with ${kbList.length} patches`
+          );
+
+          const patchResult = await patchWindowsHostSelective(host.ip, kbList);
+
+          let selectiveLogDoc = null;
+          try {
+            selectiveLogDoc = await processSelectiveInstallLog(
+              host.ip,
+              "windows",
+              host._id
+            );
+          } catch (logErr) {
+            console.warn(
+              `[Group Selective Patch] Log processing failed for ${host.ip}:`,
+              logErr.message
+            );
+          }
+
+          try {
+            const scanResult = await scanWindowsHost(host.ip);
+            if (scanResult?.patchCount != null) {
+              host.patchCount = scanResult.patchCount;
+              host.updatedAt = new Date();
+              await host.save();
+            }
+          } catch (scanErr) {
+            console.warn(
+              `[Group Selective Patch] Post-scan failed for ${host.ip}:`,
+              scanErr.message
+            );
+          }
+
+          results.success++;
+          results.details.push({
+            hostIP: host.ip,
+            success: true,
+            installed: patchResult.installSummary?.installed || kbList.length,
+            remaining: host.patchCount,
+            reboot: patchResult.installSummary?.reboot || false,
+            selectiveLogId: selectiveLogDoc?._id || null,
+          });
+        } catch (error) {
+          console.error(
+            `[Group Selective Patch] Failed for ${host.ip}:`,
+            error
+          );
+          results.failed++;
+          results.details.push({
+            hostIP: host.ip,
+            success: false,
+            error: error.message,
+          });
+        }
+      }
+    } else if (osType === "Linux") {
+      // Linux processing...
+      try {
+        const hostPackagesMap = {};
+        hostsToUpdate.forEach((host) => {
+          hostPackagesMap[host.ip] = selectedPatches[host.ip];
+        });
+
+        console.log(
+          `[Group Selective Patch] Processing ${hostsToUpdate.length} Linux hosts`
+        );
+
+        const patchResult = await patchLinuxHostSelective(hostPackagesMap);
+
+        for (const host of hostsToUpdate) {
+          try {
+            await processSelectiveInstallLog(host.ip, "linux", host._id);
+
+            const scanResult = await scanLinuxHost(host.ip);
+            if (scanResult?.patchCount != null) {
+              host.patchCount = scanResult.patchCount;
+              host.updatedAt = new Date();
+              await host.save();
+            }
+
+            results.success++;
+            results.details.push({
+              hostIP: host.ip,
+              success: true,
+              installed: selectedPatches[host.ip].length,
+              remaining: host.patchCount,
+            });
+          } catch (error) {
+            console.error(
+              `[Group Selective Patch] Post-processing failed for ${host.ip}:`,
+              error
+            );
+            results.failed++;
+            results.details.push({
+              hostIP: host.ip,
+              success: false,
+              error: error.message,
+            });
+          }
+        }
+      } catch (error) {
+        console.error(`[Group Selective Patch] Linux batch failed:`, error);
+        hostsToUpdate.forEach((host) => {
+          results.failed++;
+          results.details.push({
+            hostIP: host.ip,
+            success: false,
+            error: error.message,
+          });
+        });
+      }
+    } else {
+      return res.status(400).json({
+        success: false,
+        error: `Unsupported OS type: ${osType}`,
+      });
+    }
+
+    res.json({
+      success: true,
+      message: `Selective patch deployment completed for group ${group.name}`,
+      data: results,
+    });
+  } catch (error) {
+    console.error("[Group Selective Patch] Error:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message || "Failed to deploy selective patches",
     });
   }
 }

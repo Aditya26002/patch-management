@@ -4,10 +4,10 @@ import {
   getLogById,
   getLogStats,
   getScanLogsByIP,
-  getHostActivityLogs, // NEW
-  getErrorLogs, // NEW
-  createErrorLog, // NEW (server-side use)
-  getGroupLogs, // NEW
+  getHostActivityLogs,
+  getErrorLogs,
+  createErrorLog,
+  getGroupLogs, 
 } from "../controllers/logController.js";
 
 const router = express.Router();

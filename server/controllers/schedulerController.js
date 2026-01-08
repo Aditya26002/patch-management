@@ -90,7 +90,7 @@ export async function createScheduledTask(req, res) {
       taskType,
       scheduledTime: scheduleDate,
       patchIds: taskType === "patch" ? patchIds : [],
-      hostIds: taskType === "update" ? hostIds : [],
+      hostIds: hostIds || [],
       osType,
       createdBy: createdBy || "Admin",
       status: "pending",

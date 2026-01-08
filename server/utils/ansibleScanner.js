@@ -1,3 +1,4 @@
+
 import { exec } from "child_process";
 import { promisify } from "util";
 import fs from "fs";
@@ -375,18 +376,32 @@ export async function scanHost(hostIP, osName) {
   }
 }
 
-export async function patchLinuxHostSelective(hostIP, packageNames) {
-  // Join package names with comma (no spaces)
-  const packagesToUpgrade = packageNames.join(",");
+export async function patchLinuxHostSelective(hostPackagesMap) {
+  // Handle backward compatibility: if called with (hostIP, packageNames)
+  if (typeof hostPackagesMap === "string") {
+    const hostIP = hostPackagesMap;
+    const packageNames = arguments[1];
+    hostPackagesMap = { [hostIP]: packageNames };
+  }
 
-  const command = `ansible-playbook /home/support/ansible_project/playbooks/linux_selective_patch4.yml -i /home/support/ansible_project/inventory/linux_hosts -e '{"target_hosts":"${hostIP}","host_packages":{"${hostIP}":["${packagesToUpgrade}"]}}'`;
+  const extraVars = {
+    target_hosts: Object.keys(hostPackagesMap).join(","),
+    host_packages: hostPackagesMap,
+  };
+
+  const command = `ansible-playbook /home/support/ansible_project/playbooks/linux_selective_patch4.yml -i /home/support/ansible_project/inventory/linux_hosts -e '${JSON.stringify(
+    extraVars
+  )}'`;
 
   try {
+    const hostIPs = Object.keys(hostPackagesMap);
     console.log(
-      `[Linux Patch Selective] Starting selective patch for ${hostIP}`
+      `[Linux Patch Selective] Starting selective patch for ${hostIPs.length} host(s)`
     );
+    console.log(`[Linux Patch Selective] Hosts: ${hostIPs.join(", ")}`);
     console.log(
-      `[Linux Patch Selective] Packages to upgrade: ${packagesToUpgrade}`
+      `[Linux Patch Selective] Host-Package mapping:`,
+      hostPackagesMap
     );
     console.log(`[Linux Patch Selective] Command: ${command}`);
 
@@ -396,115 +411,175 @@ export async function patchLinuxHostSelective(hostIP, packageNames) {
       timeout: 3600000,
     });
 
-    console.log(`[Linux Patch Selective] Installation complete for ${hostIP}`);
+    console.log(
+      `[Linux Patch Selective] Installation complete for ${hostIPs.join(", ")}`
+    );
 
     const summary = parseLinuxPatchSummary(stdout);
-    console.log(`[Linux Patch Selective] Summary for ${hostIP}:`, summary);
+    console.log(`[Linux Patch Selective] Summary:`, summary);
 
     return {
       success: true,
-      hostIP,
-      packagesToUpgrade: packageNames,
+      hostCount: hostIPs.length,
+      hostPackagesMap,
       ...summary,
       output: stdout,
       error: stderr || null,
     };
   } catch (error) {
-    console.error(`[Linux Patch Selective] Error for ${hostIP}:`, error);
+    console.error(
+      `[Linux Patch Selective] Error for hosts:`,
+      Object.keys(hostPackagesMap),
+      error
+    );
     throw new Error(`Linux selective patch failed: ${error.message}`);
   }
 }
 
-/**
- * Selective Windows patch installation (KBs list)
- * Ensure verification run + post-install scan same as full install
- */
-export async function patchWindowsHostSelective(hostIP, packageNames) {
-  const kbList = Array.isArray(packageNames)
-    ? packageNames.join(",")
-    : packageNames;
-  const command = `ansible-playbook -i /home/support/ansible_project/inventory/windows_hosts /home/support/ansible_project/playbooks/windows_selective_install.yml --limit ${hostIP} -e "kb_list='${kbList}'"`;
+export async function patchWindowsHostSelective(hostKbsMap) {
+  // Handle backward compatibility: if called with (hostIP, packageNames)
+  if (typeof hostKbsMap === "string") {
+    const hostIP = hostKbsMap;
+    const packageNames = arguments[1];
+    hostKbsMap = { [hostIP]: packageNames };
+  }
+
+  const extraVars = {
+    target_hosts: Object.keys(hostKbsMap).join(","),
+    patch_selection: "selective",
+    host_kbs: hostKbsMap,
+  };
+
+  const command = `ansible-playbook /home/support/ansible_project/playbooks/windows_patch_selective2.yml -i /home/support/ansible_project/inventory/windows_hosts -e '${JSON.stringify(
+    extraVars
+  )}'`;
   const logsDir = "/home/support/ansible_project/logs/installation_logs";
 
   try {
-    const installResult = await execPromise(command, SHELL_CONFIG);
+    const hostIPs = Object.keys(hostKbsMap);
+    console.log(
+      `[Windows Patch Selective] Starting selective patch for ${hostIPs.length} host(s)`
+    );
+    console.log(`[Windows Patch Selective] Hosts: ${hostIPs.join(", ")}`);
+    console.log(`[Windows Patch Selective] Host-KB mapping:`, hostKbsMap);
+    console.log(`[Windows Patch Selective] Command: ${command}`);
 
-    // verification step (same authoritative verify playbook)
-    const verifyCommand = `ansible-playbook /home/support/ansible_project/playbooks/windows_patch_verify.yml -i /home/support/ansible_project/inventory/windows_hosts -e "target_hosts=${hostIP}"`;
-    let verifyResult;
-    try {
-      verifyResult = await execPromise(verifyCommand, SHELL_CONFIG);
-    } catch (err) {
-      verifyResult = err;
-    }
+    const installResult = await execPromise(command, {
+      ...SHELL_CONFIG,
+      maxBuffer: 1024 * 1024 * 100,
+      timeout: 3600000,
+    });
 
-    // Persist verification JSON similar to full install
-    const controllerVerifyPath = path.join(logsDir, `${hostIP}_verify.json`);
-    const ts = new Date().toISOString().replace(/[:]/g, "-");
-    const savedVerifyName = `${hostIP}_windows_patch_report_${ts}.json`;
-    const savedVerifyPath = path.join(logsDir, savedVerifyName);
+    console.log(
+      `[Windows Patch Selective] Installation complete for ${hostIPs.join(
+        ", "
+      )}`
+    );
 
-    try {
-      await fs.promises.mkdir(logsDir, { recursive: true });
-
-      if (await fileExists(controllerVerifyPath)) {
-        await fs.promises.copyFile(controllerVerifyPath, savedVerifyPath);
-      } else {
-        const stdout = verifyResult?.stdout || "";
-        const stderr = verifyResult?.stderr || "";
-        let payload;
+    // Verification and post-processing for each host
+    const hostResults = [];
+    for (const hostIP of hostIPs) {
+      try {
+        // Verification step
+        const verifyCommand = `ansible-playbook /home/support/ansible_project/playbooks/windows_patch_verify.yml -i /home/support/ansible_project/inventory/windows_hosts -e "target_hosts=${hostIP}"`;
+        let verifyResult;
         try {
-          payload = JSON.parse(stdout);
-        } catch {
-          payload = {
-            stdout,
-            stderr,
-            note: "verify playbook did not emit JSON",
-          };
+          verifyResult = await execPromise(verifyCommand, SHELL_CONFIG);
+        } catch (err) {
+          verifyResult = err;
         }
-        await fs.promises.writeFile(
-          savedVerifyPath,
-          JSON.stringify(payload, null, 2),
-          "utf-8"
-        );
-      }
-    } catch (writeErr) {
-      console.error(
-        "[ansibleScanner] Failed to persist selective verification log:",
-        writeErr
-      );
-    }
 
-    // Post-install scan
-    let scanResult = { patchCount: null, output: "" };
-    try {
-      scanResult = await scanWindowsHost(hostIP);
-    } catch (scanErr) {
-      console.warn(
-        "[ansibleScanner] Post-install scan failed:",
-        scanErr?.message || scanErr
-      );
+        // Persist verification JSON
+        const controllerVerifyPath = path.join(
+          logsDir,
+          `${hostIP}_verify.json`
+        );
+        const ts = new Date().toISOString().replace(/[:]/g, "-");
+        const savedVerifyName = `${hostIP}_windows_patch_report_${ts}.json`;
+        const savedVerifyPath = path.join(logsDir, savedVerifyName);
+
+        try {
+          await fs.promises.mkdir(logsDir, { recursive: true });
+
+          if (await fileExists(controllerVerifyPath)) {
+            await fs.promises.copyFile(controllerVerifyPath, savedVerifyPath);
+          } else {
+            const stdout = verifyResult?.stdout || "";
+            const stderr = verifyResult?.stderr || "";
+            let payload;
+            try {
+              payload = JSON.parse(stdout);
+            } catch {
+              payload = {
+                stdout,
+                stderr,
+                note: "verify playbook did not emit JSON",
+              };
+            }
+            await fs.promises.writeFile(
+              savedVerifyPath,
+              JSON.stringify(payload, null, 2),
+              "utf-8"
+            );
+          }
+        } catch (writeErr) {
+          console.error(
+            `[Windows Patch Selective] Failed to persist verification log for ${hostIP}:`,
+            writeErr
+          );
+        }
+
+        // Post-install scan
+        let scanResult = { patchCount: null, output: "" };
+        try {
+          scanResult = await scanWindowsHost(hostIP);
+        } catch (scanErr) {
+          console.warn(
+            `[Windows Patch Selective] Post-install scan failed for ${hostIP}:`,
+            scanErr?.message || scanErr
+          );
+        }
+
+        hostResults.push({
+          hostIP,
+          success: true,
+          verificationLogPath: savedVerifyPath,
+          patchCount: scanResult.patchCount,
+        });
+      } catch (hostErr) {
+        console.error(
+          `[Windows Patch Selective] Error processing ${hostIP}:`,
+          hostErr
+        );
+        hostResults.push({
+          hostIP,
+          success: false,
+          error: hostErr.message,
+        });
+      }
     }
 
     const summary = parseWindowsPatchSummary(installResult.stdout || "");
 
     return {
       success: true,
+      hostCount: hostIPs.length,
+      hostKbsMap,
       installSummary: summary,
       installStdout: installResult.stdout,
       installStderr: installResult.stderr,
-      verificationLogPath: savedVerifyPath,
-      verificationStdout: verifyResult?.stdout || "",
-      verificationStderr: verifyResult?.stderr || "",
-      postScan: scanResult,
+      hostResults,
     };
   } catch (error) {
-    console.error("[ansibleScanner] patchWindowsHostSelective error:", error);
-    throw error;
+    console.error(
+      `[Windows Patch Selective] Error for hosts:`,
+      Object.keys(hostKbsMap),
+      error
+    );
+    throw new Error(`Windows selective patch failed: ${error.message}`);
   }
 }
 
-// helper used above
 async function fileExists(p) {
   try {
     await fs.promises.access(p);
@@ -514,11 +589,6 @@ async function fileExists(p) {
   }
 }
 
-/**
- * Deploy patch installer to selected hosts
- * Uses: copy_and_install_patch_installer.yml (Windows) or copy_and_install_patch_installer_linux.yml (Linux)
- * Deploys a specific installer file to multiple hosts via --limit
- */
 export async function deployPatchToHosts(hostIPs, patchFile, osType) {
   // Validate inputs
   if (!hostIPs || !Array.isArray(hostIPs) || hostIPs.length === 0) {
