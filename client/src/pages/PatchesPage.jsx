@@ -64,7 +64,7 @@ function PatchesPage() {
   useEffect(() => {
     fetchPatches();
     fetchHosts();
-  }, []); 
+  }, []);
 
   const normalizeOSList = (os) => {
     if (Array.isArray(os)) return os;
@@ -303,7 +303,6 @@ function PatchesPage() {
     return hoursDifference <= 24;
   };
 
-  // ✅ NEW: Function to get time ago string
   const getTimeAgo = (date) => {
     if (!date) return "";
     const now = new Date();
@@ -542,7 +541,7 @@ function PatchesPage() {
 
     // Auto-fill patch name from filename (without extension)
     let patchNameFromFile = file.name;
-    
+
     // Remove common extensions
     const allExtensions = [
       ".tar.gz",
@@ -559,7 +558,7 @@ function PatchesPage() {
       ".run",
       ".appimage",
     ];
-    
+
     for (const ext of allExtensions) {
       if (patchNameFromFile.toLowerCase().endsWith(ext)) {
         patchNameFromFile = patchNameFromFile.slice(0, -ext.length);
@@ -593,7 +592,7 @@ function PatchesPage() {
 
   const handleDeployConfirm = async () => {
     setShowConfirmDeployDialog(false);
-    setIsLoading(true); // ✅ This will trigger the loading overlay
+    setIsLoading(true);
     setDeploymentResults(null);
 
     try {
@@ -601,10 +600,8 @@ function PatchesPage() {
         selectedHostsForDeploy.includes(h._id)
       );
 
-      // ✅ FIX: Use affectedOS instead of applicableOS
       const affectedOSArray = currentPatch.applicableOS || [];
 
-      // Determine OS type from the first affected OS (or default to windows)
       let osType = "windows";
       if (affectedOSArray.length > 0) {
         const firstOS = affectedOSArray[0].toLowerCase();

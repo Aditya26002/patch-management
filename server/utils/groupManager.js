@@ -4,12 +4,12 @@ import { Host } from "../models/Host.js";
 // Initialize default groups
 export async function initializeDefaultGroups() {
   try {
-    console.log("🔄 Initializing default groups...");
+    console.log("?? Initializing default groups...");
 
     // Check if default groups already exist
     const existingDefaults = await Group.find({ isDefault: true });
     if (existingDefaults.length > 0) {
-      console.log("✅ Default groups already exist");
+      console.log("? Default groups already exist");
       return;
     }
 
@@ -60,16 +60,16 @@ export async function initializeDefaultGroups() {
       );
     }
 
-    console.log(`✅ Created ${defaultGroups.length} default groups`);
+    console.log(`? Created ${defaultGroups.length} default groups`);
   } catch (error) {
-    console.error("❌ Error initializing default groups:", error);
+    console.error("? Error initializing default groups:", error);
   }
 }
 
 // Refresh default groups (call when hosts are added/removed)
 export async function refreshDefaultGroups() {
   try {
-    console.log("🔄 Refreshing default groups...");
+    console.log("?? Refreshing default groups...");
 
     // Get all hosts grouped by OS
     const hosts = await Host.find({});
@@ -91,7 +91,7 @@ export async function refreshDefaultGroups() {
           isDefault: true,
         });
         await windowsGroup.save();
-        console.log("✅ Created missing Windows default group");
+        console.log("? Created missing Windows default group");
 
         // Update Windows hosts to include this group
         await Host.updateMany(
@@ -113,7 +113,7 @@ export async function refreshDefaultGroups() {
           isDefault: true,
         });
         await linuxGroup.save();
-        console.log("✅ Created missing Linux default group");
+        console.log("? Created missing Linux default group");
 
         // Update Linux hosts to include this group
         await Host.updateMany(
@@ -192,8 +192,8 @@ export async function refreshDefaultGroups() {
       }
     }
 
-    console.log("✅ Default groups refreshed");
+    console.log("? Default groups refreshed");
   } catch (error) {
-    console.error("❌ Error refreshing default groups:", error);
+    console.error("? Error refreshing default groups:", error);
   }
 }

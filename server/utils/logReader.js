@@ -261,25 +261,69 @@ export async function saveSelectiveInstallLog(
   osType
 ) {
   try {
-    const success = (logData.install?.failed_count || 0) === 0;
+    // Extract hostIP from logData (JSON from playbook)
+    const hostIP = logData.hostIP || logData.host || "";
+
+    if (!hostIP) {
+      console.warn(
+        `[Log Reader] ⚠️ hostIP not found in log data:`,
+        Object.keys(logData)
+      );
+    }
+
+    // FIX: Parse timestamp properly using the same function as other logs
+    let timestamp;
+    if (logData.timestamp) {
+      // Check if it's already a valid date string
+      if (typeof logData.timestamp === "string") {
+        // Try to parse with the Ansible timestamp parser first
+        timestamp = parseAnsibleTimestamp(logData.timestamp);
+      } else if (logData.timestamp instanceof Date) {
+        timestamp = logData.timestamp;
+      } else {
+        // Try to construct a Date object
+        timestamp = new Date(logData.timestamp);
+      }
+
+      // Validate the parsed date
+      if (isNaN(timestamp.getTime())) {
+        console.warn(
+          `[Log Reader] Invalid timestamp in log data: ${logData.timestamp}, using current time`
+        );
+        timestamp = new Date();
+      }
+    } else {
+      timestamp = new Date();
+    }
+
+    const derivedSuccess =
+      typeof logData.success === "boolean"
+        ? logData.success
+        : logData.summary?.failed === 0;
+
+    const derivedRebootRequired =
+      typeof logData.rebootRequired === "boolean"
+        ? logData.rebootRequired
+        : logData.install?.reboot_required === true ||
+          logData.summary?.reboot_required === true;
+
     const selectiveLog = new SelectiveInstallLog({
-      hostIP: logData.host,
+      hostIP: hostIP, // MUST be provided for validation
       hostId,
-      os: osType || logData.os || "linux",
+      os: osType,
       installType: "selective",
-      timestamp: parseAnsibleTimestamp(logData.timestamp),
-      success,
-      rebootRequired:
-        logData.install?.reboot_required ??
-        logData.summary?.reboot_required ??
-        false,
-      selection: logData.selection,
-      install: logData.install,
-      summary: logData.summary,
+      timestamp: timestamp, // Use properly parsed timestamp
+      success: derivedSuccess,
+      rebootRequired: derivedRebootRequired,
+      selection: logData.selection || {},
+      install: logData.install || {},
+      summary: logData.summary || {},
       rawLog: logData,
       logFilePath,
     });
+
     await selectiveLog.save();
+
     console.log(
       `[Log Reader] ✅ Selective install log saved: ${selectiveLog._id}`
     );

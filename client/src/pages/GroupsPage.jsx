@@ -2,6 +2,9 @@ import AdminNavbar from "../components/navbar/AdminNavbar";
 import { useState, useEffect, useMemo, useRef } from "react";
 import CreateGroupDialog from "../components/groups/CreateGroupDialog";
 import GroupDetailsDialog from "../components/groups/GroupDetailsDialog";
+import GroupSelectivePatchDialog from "../components/groups/GroupSelectivePatchDialog";
+import Toast from "../components/common/Toast";
+import LoadingOverlay from "../components/common/LoadingOverlay";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
 
@@ -26,6 +29,10 @@ function GroupsPage() {
   const [showDetailsDialog, setShowDetailsDialog] = useState(null); // group id or null
   const [editingGroup, setEditingGroup] = useState(null); // group object or null
   const [error, setError] = useState(null);
+  const [showSelectivePatchDialog, setShowSelectivePatchDialog] =
+    useState(false);
+  const [selectedGroupForPatch, setSelectedGroupForPatch] = useState(null);
+  const [resultMessage, setResultMessage] = useState(null);
 
   const osFilterRef = useRef(null);
   const typeFilterRef = useRef(null);
@@ -179,6 +186,71 @@ function GroupsPage() {
 
   const handleCloseDetails = () => {
     setShowDetailsDialog(null);
+  };
+
+  const handleViewDetails = (group) => {
+    setShowDetailsDialog(group.id);
+  };
+
+  const handleEdit = (group) => {
+    setEditingGroup(group);
+    setShowCreateDialog(true);
+  };
+
+  const handleDeleteClick = (group) => {
+    handleDeleteGroup(group.id);
+  };
+
+  const handleDeploySelectivePatches = (group) => {
+    setSelectedGroupForPatch(group);
+    setShowSelectivePatchDialog(true);
+  };
+
+  const handleConfirmSelectiveDeploy = async (groupId, selectedPatches) => {
+    setIsLoading(true);
+    setResultMessage({
+      type: "processing",
+      text: `Deploying selective patches to group. This may take several minutes...`,
+    });
+
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/groups/${groupId}/deploy-selective-patches`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            selectedPatches,
+            performedBy: "admin",
+          }),
+        }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || "Deployment failed");
+      }
+
+      const { success, failed, details } = data.data;
+
+      setResultMessage({
+        type: "success",
+        text: `✅ Selective patch deployment complete! Success: ${success}, Failed: ${failed}`,
+      });
+
+      fetchGroups();
+    } catch (error) {
+      console.error("Selective deployment error:", error);
+      setResultMessage({
+        type: "error",
+        text: error.message || "Failed to deploy selective patches",
+      });
+    } finally {
+      setIsLoading(false);
+      setShowSelectivePatchDialog(false);
+      setSelectedGroupForPatch(null);
+    }
   };
 
   const selectedGroup = groups.find((g) => g.id === showDetailsDialog);
@@ -515,6 +587,13 @@ function GroupsPage() {
                               </button>
                             </>
                           )}
+                          <button
+                            onClick={() => handleDeploySelectivePatches(group)}
+                            disabled={group.hosts.length === 0}
+                            className="px-2 py-1 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors text-xs disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            Deploy Patches
+                          </button>
                         </div>
                       </td>
                     </tr>
@@ -578,6 +657,23 @@ function GroupsPage() {
           group={selectedGroup}
           onClose={handleCloseDetails}
         />
+        <GroupSelectivePatchDialog
+          show={showSelectivePatchDialog}
+          group={selectedGroupForPatch}
+          onClose={() => {
+            setShowSelectivePatchDialog(false);
+            setSelectedGroupForPatch(null);
+          }}
+          onDeploy={handleConfirmSelectiveDeploy}
+        />
+        {resultMessage && (
+          <Toast
+            message={resultMessage.text}
+            type={resultMessage.type}
+            onClose={() => setResultMessage(null)}
+          />
+        )}
+        {isLoading && <LoadingOverlay message="Processing..." />}
       </div>
     </div>
   );

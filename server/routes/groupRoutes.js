@@ -5,6 +5,7 @@ import {
   createGroup,
   updateGroup,
   deleteGroup,
+  deploySelectivePatchesToGroup,
 } from "../controllers/groupController.js";
 
 const router = express.Router();
@@ -23,5 +24,7 @@ router.put("/:id", updateGroup);
 
 // DELETE /api/groups/:id - Delete group
 router.delete("/:id", deleteGroup);
+
+router.post("/:id/deploy-selective-patches", deploySelectivePatchesToGroup);
 
 export default router;

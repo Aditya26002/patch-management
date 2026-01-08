@@ -44,8 +44,8 @@ function PatchDialog({
                 <input
                   type="checkbox"
                   checked={allSelected}
-                  onChange={() => {}}
-                  className="w-4 h-4 text-blue-500 rounded focus:ring-blue-500 pointer-events-none"
+                  readOnly
+                  className="w-4 h-4 text-blue-500 rounded pointer-events-none"
                 />
                 {allSelected ? "Deselect All" : "Select All"}
               </button>
@@ -71,7 +71,7 @@ function PatchDialog({
                           checked={selectedPatches.includes(patch._id)}
                           onChange={() => onTogglePatch(patch._id)}
                           disabled={isDeploying}
-                          className="w-5 h-5 text-orange-500 rounded focus:ring-orange-500 mt-1 disabled:opacity-50 disabled:cursor-not-allowed"
+                          className="w-5 h-5 text-orange-500 rounded focus:ring-orange-500 mt-1"
                         />
                         <div className="flex-1">
                           <h3 className="font-medium text-gray-900 dark:text-white">
@@ -144,6 +144,9 @@ function PatchDialog({
               <h2 className="text-2xl font-bold text-gray-900 dark:text-white">
                 Confirm Update
               </h2>
+              <p className="text-gray-600 dark:text-gray-400 mt-1">
+                This will install selected patches and may reboot the host.
+              </p>
             </div>
 
             <div className="p-6 flex-1">

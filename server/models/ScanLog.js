@@ -40,6 +40,7 @@ const scanLogSchema = new mongoose.Schema(
         category: String, // Windows only / NULL for Linux
         currentVersion: String,
         newVersion: String,
+        isSecurity: Boolean,
         supportUrl: String, // Windows only
       },
     ],
